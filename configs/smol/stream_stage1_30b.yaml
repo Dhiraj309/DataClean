@@ -14,7 +14,7 @@ tokenizer:
 output:
   repo_id: "Dhiraj309/laughlm-135m-shards-v2"
   path_prefix: "stage1"
-  private: true
+  private: false
   shard_size_tokens: 500000000
 
 sources:
@@ -99,15 +99,48 @@ sources:
       max_chars: 150000
       missing_policy: reject
 
-  - name: starcoderdata
+  - name: starcoder_python
     repo_id: "bigcode/starcoderdata"
     revision: "main"
-    path_prefixes:
-      - "python"
-      - "javascript"
-      - "cpp"
+    path_prefix: "python"
     file_pattern: "*.parquet"
-    weight: 0.08
+    weight: 0.04
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_words: 30
+      min_chars: 100
+      max_words: 50000
+      max_chars: 250000
+
+  - name: starcoder_javascript
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "javascript"
+    file_pattern: "*.parquet"
+    weight: 0.02
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_words: 30
+      min_chars: 100
+      max_words: 50000
+      max_chars: 250000
+
+  - name: starcoder_cpp
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "cpp"
+    file_pattern: "*.parquet"
+    weight: 0.02
     columns:
       text: content
       id: id

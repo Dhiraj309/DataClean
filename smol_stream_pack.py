@@ -1034,6 +1034,18 @@ def choose_deficit_domain(
     return min(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
+def compute_worker_target_tokens(
+    global_target: int, worker_id: int, num_workers: int
+) -> int:
+    """Split global_target across workers so sum(all workers) == global_target."""
+    if num_workers < 1:
+        raise ValueError("num_workers must be >= 1")
+    if worker_id < 0 or worker_id >= num_workers:
+        raise ValueError("worker_id must satisfy 0 <= worker_id < num_workers")
+    base, rem = divmod(int(global_target), int(num_workers))
+    return base + (1 if int(worker_id) < rem else 0)
+
+
 def load_resume_state(
     *,
     local_state_path: Path,
@@ -1190,9 +1202,11 @@ def main(argv: list[str] | None = None) -> None:
     target_tokens = args.dry_run_tokens or args.target_tokens or cfg.get("target_tokens")
     if target_tokens is not None:
         target_tokens = int(target_tokens)
-        # Partition global target_tokens evenly across worker-id shards unless --dry-run-tokens is explicit
+        # Partition global target_tokens across workers so sum(worker budgets) == target_tokens
         if args.dry_run_tokens is None and args.target_tokens is None and args.num_workers > 1:
-            target_tokens = (target_tokens + args.num_workers - 1) // args.num_workers
+            target_tokens = compute_worker_target_tokens(
+                target_tokens, args.worker_id, args.num_workers
+            )
 
     token = optional_hf_token()
     if not args.no_upload and not token:

@@ -17,6 +17,30 @@ from trainlm import (
 from trainlm.config import ModelSourceConfig
 
 
+import json
+
+
+def resolve_stage_manifest_root(
+    shards_path: Path, stage_prefix: str
+) -> tuple[Path, str]:
+    root = shards_path.expanduser().resolve()
+    sub = root / stage_prefix
+    if sub.is_dir():
+        manifests = sorted(sub.glob("*.manifest.json"))
+        if manifests:
+            data_path = json.loads(manifests[0].read_text(encoding="utf-8")).get("data_path", "")
+            if str(data_path).startswith(f"{stage_prefix}/"):
+                return root, f"{stage_prefix}/*.manifest.json"
+            return sub, "*.manifest.json"
+    if root.name == stage_prefix:
+        manifests = sorted(root.glob("*.manifest.json"))
+        if manifests:
+            data_path = json.loads(manifests[0].read_text(encoding="utf-8")).get("data_path", "")
+            if str(data_path).startswith(f"{stage_prefix}/"):
+                return root.parent, f"{stage_prefix}/*.manifest.json"
+    return root, "*.manifest.json"
+
+
 def load_local_stage_dataset(
     shards_path: Path,
     *,
@@ -24,28 +48,10 @@ def load_local_stage_dataset(
     sequence_length: int,
     seed: int = 42,
 ) -> PackedBinDataset:
-    root = shards_path.expanduser().resolve()
-    if (root / stage_prefix).is_dir() and list((root / stage_prefix).glob("*.manifest.json")):
-        return PackedBinDataset.from_directory(
-            root,
-            manifest_pattern=f"{stage_prefix}/*.manifest.json",
-            sequence_length=sequence_length,
-            split="train",
-            seed=seed,
-        )
-    if root.name == stage_prefix and list(root.glob("*.manifest.json")):
-        first_text = next(root.glob("*.manifest.json")).read_text(encoding="utf-8")
-        if f'"data_path": "{stage_prefix}/' in first_text or f'"data_path":"{stage_prefix}/' in first_text:
-            return PackedBinDataset.from_directory(
-                root.parent,
-                manifest_pattern=f"{stage_prefix}/*.manifest.json",
-                sequence_length=sequence_length,
-                split="train",
-                seed=seed,
-            )
+    base_dir, pattern = resolve_stage_manifest_root(shards_path, stage_prefix)
     return PackedBinDataset.from_directory(
-        root,
-        manifest_pattern="*.manifest.json",
+        base_dir,
+        manifest_pattern=pattern,
         sequence_length=sequence_length,
         split="train",
         seed=seed,

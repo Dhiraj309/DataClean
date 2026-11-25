@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 
@@ -18,29 +19,30 @@ from trainlm.training import TokenWSD
 from transformers import AutoTokenizer
 
 
-def load_stage1_dataset(shards_path: Path, sequence_length: int, seed: int) -> PackedBinDataset:
+def resolve_stage1_manifest_root(shards_path: Path) -> tuple[Path, str]:
     root = shards_path.expanduser().resolve()
-    if (root / "stage1").is_dir() and list((root / "stage1").glob("*.manifest.json")):
-        return PackedBinDataset.from_directory(
-            root,
-            manifest_pattern="stage1/*.manifest.json",
-            sequence_length=sequence_length,
-            split="train",
-            seed=seed,
-        )
-    if root.name == "stage1" and list(root.glob("*.manifest.json")):
-        first_text = next(root.glob("*.manifest.json")).read_text(encoding="utf-8")
-        if '"data_path": "stage1/' in first_text or '"data_path":"stage1/' in first_text:
-            return PackedBinDataset.from_directory(
-                root.parent,
-                manifest_pattern="stage1/*.manifest.json",
-                sequence_length=sequence_length,
-                split="train",
-                seed=seed,
-            )
+    sub = root / "stage1"
+    if sub.is_dir():
+        manifests = sorted(sub.glob("*.manifest.json"))
+        if manifests:
+            data_path = json.loads(manifests[0].read_text(encoding="utf-8")).get("data_path", "")
+            if str(data_path).startswith("stage1/"):
+                return root, "stage1/*.manifest.json"
+            return sub, "*.manifest.json"
+    if root.name == "stage1":
+        manifests = sorted(root.glob("*.manifest.json"))
+        if manifests:
+            data_path = json.loads(manifests[0].read_text(encoding="utf-8")).get("data_path", "")
+            if str(data_path).startswith("stage1/"):
+                return root.parent, "stage1/*.manifest.json"
+    return root, "*.manifest.json"
+
+
+def load_stage1_dataset(shards_path: Path, sequence_length: int, seed: int) -> PackedBinDataset:
+    base_dir, pattern = resolve_stage1_manifest_root(shards_path)
     return PackedBinDataset.from_directory(
-        root,
-        manifest_pattern="*.manifest.json",
+        base_dir,
+        manifest_pattern=pattern,
         sequence_length=sequence_length,
         split="train",
         seed=seed,
@@ -103,7 +105,8 @@ def main() -> None:
         save_steps=args.save_steps,
         save_total_limit=4,
         eval_strategy="no",
-        dataloader_num_workers=4,
+        # Checkpointing an IterableDataset (PackedBinDataset) requires num_workers=0 in TrainLM.
+        dataloader_num_workers=0,
         dataloader_pin_memory=True,
         report_to=("jsonl",),
     )
@@ -114,7 +117,8 @@ def main() -> None:
         train_dataset=dataset,
         tokenizer=tokenizer,
     )
-    # Attach exact token-indexed WSD scheduler (2% warmup over 35B = 700M, 84% stable -> flat 3e-3 across 30B).
+    # TrainLMTrainer.train() does not rebuild trainer.scheduler or trainer.engine;
+    # checkpoint resume reloads state into this exact TokenWSD instance.
     scheduler = TokenWSD(
         trainer.optimizer,
         horizon_tokens=args.horizon_tokens,

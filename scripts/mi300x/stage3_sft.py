@@ -9,14 +9,6 @@ from typing import Any
 
 os.environ.setdefault("TORCH_BLAS_PREFER_HIPBLASLT", "1")
 
-from datasets import concatenate_datasets, load_dataset
-from transformers import AutoTokenizer
-from trainlm import (
-    TrainLMFineTuningConfig,
-    TrainLMTrainingArguments,
-    run_finetuning,
-)
-
 
 # Verified against HuggingFaceTB/smoltalk2 config="SFT" via datasets-server API.
 VERIFIED_SMOLTALK2_SFT_NO_THINK_SPLITS = (
@@ -41,11 +33,18 @@ def tokenize_with_assistant_mask(
     tokenizer: Any,
     max_length: int,
 ) -> dict[str, list[Any]]:
-    """Render ChatML turns and compute assistant-only labels + loss_mask."""
+    """Render ChatML turns and compute assistant-only labels + loss_mask.
+
+    Does not rely on Jinja ``{% generation %}`` tags (which SmolLM2-135M-Instruct's
+    ChatML template omits). Instead computes exact prefix boundaries per turn:
+    system/user/header tokens get ``loss_mask=0, labels=-100``, while assistant
+    response tokens up to and including ``<|im_end|>`` get ``loss_mask=1``.
+    """
     all_input_ids: list[list[int]] = []
     all_attention_mask: list[list[int]] = []
     all_labels: list[list[int]] = []
     all_loss_mask: list[list[int]] = []
+    eos_id = getattr(tokenizer, "eos_token_id", None)
 
     for messages in batch["messages"]:
         if not messages:
@@ -55,24 +54,37 @@ def tokenize_with_assistant_mask(
         prefix_len = 0
         for idx, msg in enumerate(messages):
             role = msg.get("role", "")
-            upto = tokenizer.apply_chat_template(
-                messages[: idx + 1],
-                tokenize=True,
-                add_generation_prompt=False,
+            upto = list(
+                tokenizer.apply_chat_template(
+                    messages[: idx + 1],
+                    tokenize=True,
+                    add_generation_prompt=False,
+                )
             )
             if role == "assistant":
-                prompt_prefix = tokenizer.apply_chat_template(
-                    messages[:idx],
-                    tokenize=True,
-                    add_generation_prompt=True,
+                prompt_prefix = list(
+                    tokenizer.apply_chat_template(
+                        messages[:idx],
+                        tokenize=True,
+                        add_generation_prompt=True,
+                    )
                 )
                 header_len = max(prefix_len, len(prompt_prefix))
-                full_ids = list(upto)
-                # Mask prompt/header tokens (0) and supervise assistant tokens + <|im_end|> (1).
+                full_ids = upto
                 loss_mask.extend([0] * max(0, header_len - len(loss_mask)))
-                loss_mask.extend([1] * max(0, len(full_ids) - len(loss_mask)))
+                # Supervise assistant content + <|im_end|>, excluding trailing separator newline after <|im_end|>.
+                turn_end = len(full_ids)
+                if (
+                    eos_id is not None
+                    and turn_end - header_len >= 2
+                    and full_ids[-2] == int(eos_id)
+                ):
+                    loss_mask.extend([1] * max(0, (turn_end - 1) - len(loss_mask)))
+                    loss_mask.append(0)
+                else:
+                    loss_mask.extend([1] * max(0, turn_end - len(loss_mask)))
             else:
-                full_ids = list(upto)
+                full_ids = upto
                 loss_mask.extend([0] * max(0, len(full_ids) - len(loss_mask)))
             prefix_len = len(full_ids)
 
@@ -99,6 +111,14 @@ def tokenize_with_assistant_mask(
 
 
 def main() -> None:
+    from datasets import concatenate_datasets, load_dataset
+    from transformers import AutoTokenizer
+    from trainlm import (
+        TrainLMFineTuningConfig,
+        TrainLMTrainingArguments,
+        run_finetuning,
+    )
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage2-checkpoint", default="/mnt/scratch/runs/laughlm-stage2-5b/final")
     parser.add_argument("--output-dir", default="/mnt/scratch/runs/laughlm-stage3-sft")

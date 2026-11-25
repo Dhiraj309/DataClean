@@ -318,6 +318,23 @@ def test_commit_with_backoff_retries_412_429_5xx(monkeypatch: pytest.MonkeyPatch
 
 
 def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
+    starcoder_sample = {
+        "content": (
+            "def binary_search(arr: list[int], target: int) -> int:\n"
+            "    lo, hi = 0, len(arr) - 1\n"
+            "    while lo <= hi:\n"
+            "        mid = (lo + hi) // 2\n"
+            "        if arr[mid] == target:\n"
+            "            return mid\n"
+            "        if arr[mid] < target:\n"
+            "            lo = mid + 1\n"
+            "        else:\n"
+            "            hi = mid - 1\n"
+            "    return -1\n\n"
+        ) * 30,
+        "id": "sc-1",
+        "max_stars_repo_name": "org/algorithms",
+    }
     sample_by_source = {
         "dclm": {
             "text": ("High quality curated web article explaining numerical algorithms. " * 25),
@@ -344,23 +361,9 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
             "token_length": 1300,
             "seed_data": "openstax",
         },
-        "starcoderdata": {
-            "content": (
-                "def binary_search(arr: list[int], target: int) -> int:\n"
-                "    lo, hi = 0, len(arr) - 1\n"
-                "    while lo <= hi:\n"
-                "        mid = (lo + hi) // 2\n"
-                "        if arr[mid] == target:\n"
-                "            return mid\n"
-                "        if arr[mid] < target:\n"
-                "            lo = mid + 1\n"
-                "        else:\n"
-                "            hi = mid - 1\n"
-                "    return -1\n\n"
-            ) * 30,
-            "id": "sc-1",
-            "max_stars_repo_name": "org/algorithms",
-        },
+        "starcoder_python": starcoder_sample,
+        "starcoder_javascript": starcoder_sample,
+        "starcoder_cpp": starcoder_sample,
         "finemath": {
             "text": ("Theorem: Every continuous function on a compact interval is bounded. " * 100),
             "url": "https://math.example.org/proof",
@@ -384,15 +387,26 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
     }
 
     tok = DummyFastTokenizer()
-    for yaml_path in (
-        "configs/smol/stream_stage1_30b.yaml",
-        "configs/smol/stream_stage2_anneal_5b.yaml",
+    for yaml_path, expected_starcoder in (
+        (
+            "configs/smol/stream_stage1_30b.yaml",
+            {"starcoder_python": 0.04, "starcoder_javascript": 0.02, "starcoder_cpp": 0.02},
+        ),
+        (
+            "configs/smol/stream_stage2_anneal_5b.yaml",
+            {"starcoder_python": 0.13, "starcoder_javascript": 0.06, "starcoder_cpp": 0.06},
+        ),
     ):
         cfg = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
         assert cfg["output"]["repo_id"] == "Dhiraj309/laughlm-135m-shards-v2"
+        assert cfg["output"]["private"] is False
         assert cfg["tokenizer"]["id"] == "HuggingFaceTB/SmolLM2-135M"
         assert cfg["tokenizer"]["vocab_size"] == 49152
         assert cfg["tokenizer"]["eos_token_id"] == 0
+        weights = {s["name"]: s["weight"] for s in cfg["sources"]}
+        assert abs(sum(weights.values()) - 1.0) < 1e-9
+        for sc_name, sc_weight in expected_starcoder.items():
+            assert weights[sc_name] == sc_weight
         for src in cfg["sources"]:
             name = src["name"]
             assert name in sample_by_source, f"Missing test fixture for {name}"
@@ -403,6 +417,21 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
             assert stats["accepted"] == 1, f"{yaml_path}:{name} rejected representative row: {stats}"
             assert stats["rejected"] == 0, f"{yaml_path}:{name} had rejections: {stats}"
             assert tokens.size > 0 and doc_lens.size >= 1
+
+
+def test_worker_target_tokens_sum_equals_global_target() -> None:
+    for global_target, num_workers in (
+        (30_000_000_000, 5),
+        (5_000_000_000, 5),
+        (10, 3),
+        (17, 4),
+    ):
+        per_worker = [
+            sp.compute_worker_target_tokens(global_target, w, num_workers)
+            for w in range(num_workers)
+        ]
+        assert sum(per_worker) == global_target
+        assert max(per_worker) - min(per_worker) <= 1
 
 
 def test_path_prefix_manifest_and_local_layout(
@@ -460,8 +489,84 @@ def test_path_prefix_manifest_and_local_layout(
     assert man_path.is_file()
     assert bin_path.is_file()
     manifest = json.loads(man_path.read_text(encoding="utf-8"))
-    # Repo-root-relative data_path works with both TrainLM HuggingFacePackedShardSource
-    # and PackedBinDataset.from_directory(shards_root, manifest_pattern="stage1/*.manifest.json").
     assert manifest["data_path"] == "stage1/stream_stage1_w00_shard_00000.bin"
     assert (shards_root / manifest["data_path"]).resolve() == bin_path.resolve()
+
+
+def test_mi300x_subfolder_manifest_root_no_double_prefix(tmp_path: Path) -> None:
+    import importlib.util
+
+    def load_resolver(script_rel: str, fn_name: str):
+        # Parse only the pure-Python resolver function without importing trainlm.
+        src = Path(script_rel).read_text(encoding="utf-8")
+        ns: dict[str, object] = {"Path": Path, "json": json}
+        start = src.index(f"def {fn_name}(")
+        end = src.index("\ndef ", start + 1)
+        exec(src[start:end], ns)
+        return ns[fn_name]
+
+    r0 = load_resolver("scripts/mi300x/stage0_benchmark.py", "resolve_stage_manifest_root")
+    r1 = load_resolver("scripts/mi300x/stage1_base_30b.py", "resolve_stage1_manifest_root")
+    r2 = load_resolver("scripts/mi300x/stage2_anneal_5b.py", "resolve_stage2_manifest_root")
+
+    for stage in ("stage1", "stage2"):
+        sdir = tmp_path / stage
+        sdir.mkdir()
+        bin_p = sdir / f"stream_{stage}_w00_shard_00000.bin"
+        man_p = sdir / f"stream_{stage}_w00_shard_00000.manifest.json"
+        bin_p.write_bytes(b"\x00\x00")
+        man_p.write_text(json.dumps({"data_path": f"{stage}/{bin_p.name}"}), encoding="utf-8")
+
+        for passed in (tmp_path, sdir):
+            base_dir, pattern = r0(passed, stage)
+            assert base_dir == tmp_path
+            assert pattern == f"{stage}/*.manifest.json"
+            assert (base_dir / f"{stage}/{bin_p.name}").resolve() == bin_p.resolve()
+
+    base1, pat1 = r1(tmp_path / "stage1")
+    base2, pat2 = r2(tmp_path / "stage2")
+    assert base1 == tmp_path and pat1 == "stage1/*.manifest.json"
+    assert base2 == tmp_path and pat2 == "stage2/*.manifest.json"
+
+
+def test_sft_assistant_masking_two_messages() -> None:
+    from scripts.mi300x.stage3_sft import tokenize_with_assistant_mask
+
+    class ChatMLMockTokenizer:
+        eos_token_id = 2  # <|im_end|>
+
+        def apply_chat_template(self, messages, *, tokenize=True, add_generation_prompt=False):
+            assert tokenize is True
+            # Deterministic token table modeling SmolLM2-135M-Instruct ChatML (no {% generation %} tag):
+            # <|im_start|>=1, <|im_end|>=2, \n=198, system=10, user=11, assistant=12
+            role_id = {"system": 10, "user": 11, "assistant": 12}
+            ids: list[int] = []
+            for m in messages:
+                ids.extend([1, role_id[m["role"]], 198])
+                ids.extend([100 + (ord(c) % 90) for c in m["content"]])
+                ids.extend([2, 198])
+            if add_generation_prompt:
+                ids.extend([1, role_id["assistant"], 198])
+            return ids
+
+    tok = ChatMLMockTokenizer()
+    messages = [
+        {"role": "system", "content": "Sys"},
+        {"role": "user", "content": "Hi"},
+        {"role": "assistant", "content": "Yo!"},
+    ]
+    out = tokenize_with_assistant_mask({"messages": [messages]}, tok, max_length=128)
+    ids = out["input_ids"][0]
+    mask = out["loss_mask"][0]
+    labels = out["labels"][0]
+
+    # Verify prompt lengths: system (3+3+2=8) + user (3+2+2=7) + assistant header (3) = 18 non-supervised tokens
+    # Assistant response "Yo!" (3 tokens) + <|im_end|> (1 token, id=2) = 4 supervised tokens; trailing \n masked (0).
+    assert mask[:18] == [0] * 18
+    assert all(lbl == -100 for lbl in labels[:18])
+    assert mask[18:22] == [1, 1, 1, 1]
+    assert ids[21] == 2  # <|im_end|> is supervised
+    assert labels[18:22] == ids[18:22]
+    assert mask[22] == 0 and ids[22] == 198 and labels[22] == -100
+
 
