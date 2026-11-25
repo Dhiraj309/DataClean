@@ -12,7 +12,7 @@ tokenizer:
   hard_doc_limit: 65536
 
 output:
-  repo_id: "Dhiraj309/laughlm-135m-shards-v2"
+  repo_id: "Dhiraj45/laughlm-135m-shards-v2"
   path_prefix: "stage2"
   private: false
   shard_size_tokens: 500000000
