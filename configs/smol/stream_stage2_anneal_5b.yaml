@@ -7,13 +7,15 @@ reverse_files: true
 tokenizer:
   id: "HuggingFaceTB/SmolLM2-135M"
   vocab_size: 49152
+  eos_token_id: 0
   max_doc_tokens: 8192
   hard_doc_limit: 65536
 
 output:
-  repo_id: "${HF_USER}/laughlm-smol-5b-stage2-anneal"
+  repo_id: "Dhiraj309/laughlm-135m-shards-v2"
+  path_prefix: "stage2"
   private: true
-  shard_tokens: 500000000
+  shard_size_tokens: 500000000
 
 sources:
   - name: finemath
@@ -22,7 +24,7 @@ sources:
     path_prefix: "finemath-4plus"
     file_pattern: "*.parquet"
     reverse_files: true
-    weight: 0.30
+    weight: 0.15
     columns:
       text: text
       url: url
@@ -44,6 +46,23 @@ sources:
       max_chars: 250000
       missing_policy: reject
 
+  - name: megamath_web_pro
+    repo_id: "IFM/MegaMath"
+    revision: "main"
+    path_prefix: "megamath-web-pro"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.15
+    columns:
+      text: text
+    required_columns:
+      - text
+    filters:
+      min_chars: 4000
+      max_words: 50000
+      max_chars: 250000
+      missing_policy: reject
+
   - name: starcoderdata
     repo_id: "bigcode/starcoderdata"
     revision: "main"
@@ -61,7 +80,7 @@ sources:
     required_columns:
       - content
     filters:
-      min_estimated_tokens: 1024
+      min_chars: 4000
       max_words: 100000
       max_chars: 500000
 

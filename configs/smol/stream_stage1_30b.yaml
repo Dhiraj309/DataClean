@@ -7,13 +7,15 @@ reverse_files: false
 tokenizer:
   id: "HuggingFaceTB/SmolLM2-135M"
   vocab_size: 49152
+  eos_token_id: 0
   max_doc_tokens: 8192
   hard_doc_limit: 65536
 
 output:
-  repo_id: "${HF_USER}/laughlm-smol-30b-stage1"
+  repo_id: "Dhiraj309/laughlm-135m-shards-v2"
+  path_prefix: "stage1"
   private: true
-  shard_tokens: 500000000
+  shard_size_tokens: 500000000
 
 sources:
   - name: dclm

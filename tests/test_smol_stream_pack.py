@@ -315,3 +315,153 @@ def test_commit_with_backoff_retries_412_429_5xx(monkeypatch: pytest.MonkeyPatch
         max_attempts=5,
     )
     assert attempts["n"] == 4
+
+
+def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
+    sample_by_source = {
+        "dclm": {
+            "text": ("High quality curated web article explaining numerical algorithms. " * 25),
+            "id": "dclm-1",
+            "url": "https://example.com/a",
+            "language": "en",
+            "language_score": 0.99,
+            "fasttext_score": 0.05,
+            "dataset": "dclm",
+        },
+        "fineweb_edu": {
+            "text": ("University lecture notes on linear algebra and eigenvalues. " * 90),
+            "id": "fw-1",
+            "url": "https://example.edu/notes",
+            "language": "en",
+            "language_score": 0.98,
+            "token_count": 1200,
+            "score": 4.2,
+            "int_score": 4,
+            "dataset": "fineweb-edu",
+        },
+        "cosmopedia_v2": {
+            "text": ("A comprehensive textbook chapter covering thermodynamics and entropy. " * 100),
+            "token_length": 1300,
+            "seed_data": "openstax",
+        },
+        "starcoderdata": {
+            "content": (
+                "def binary_search(arr: list[int], target: int) -> int:\n"
+                "    lo, hi = 0, len(arr) - 1\n"
+                "    while lo <= hi:\n"
+                "        mid = (lo + hi) // 2\n"
+                "        if arr[mid] == target:\n"
+                "            return mid\n"
+                "        if arr[mid] < target:\n"
+                "            lo = mid + 1\n"
+                "        else:\n"
+                "            hi = mid - 1\n"
+                "    return -1\n\n"
+            ) * 30,
+            "id": "sc-1",
+            "max_stars_repo_name": "org/algorithms",
+        },
+        "finemath": {
+            "text": ("Theorem: Every continuous function on a compact interval is bounded. " * 100),
+            "url": "https://math.example.org/proof",
+            "language": "en",
+            "language_score": 0.99,
+            "token_count": 1200,
+            "score": 4.5,
+            "int_score": 4,
+        },
+        "megamath_web_pro": {
+            "text": ("Proof of Cauchy-Schwarz inequality in inner product spaces. " * 95),
+        },
+        "finepdfs_edu": {
+            "text": ("Academic monograph on partial differential equations and Sobolev spaces. " * 100),
+            "id": "pdf-1",
+            "url": "https://arxiv.org/pdf/0000.0000",
+            "language": "eng_Latn",
+            "token_count": 1500,
+            "dataset": "finepdfs-edu",
+        },
+    }
+
+    tok = DummyFastTokenizer()
+    for yaml_path in (
+        "configs/smol/stream_stage1_30b.yaml",
+        "configs/smol/stream_stage2_anneal_5b.yaml",
+    ):
+        cfg = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
+        assert cfg["output"]["repo_id"] == "Dhiraj309/laughlm-135m-shards-v2"
+        assert cfg["tokenizer"]["id"] == "HuggingFaceTB/SmolLM2-135M"
+        assert cfg["tokenizer"]["vocab_size"] == 49152
+        assert cfg["tokenizer"]["eos_token_id"] == 0
+        for src in cfg["sources"]:
+            name = src["name"]
+            assert name in sample_by_source, f"Missing test fixture for {name}"
+            row = sample_by_source[name]
+            tokens, doc_lens, stats = sp.tokenize_and_filter_rows(
+                [row], src, tok, eos_id=0, vocab_size=49152
+            )
+            assert stats["accepted"] == 1, f"{yaml_path}:{name} rejected representative row: {stats}"
+            assert stats["rejected"] == 0, f"{yaml_path}:{name} had rejections: {stats}"
+            assert tokens.size > 0 and doc_lens.size >= 1
+
+
+def test_path_prefix_manifest_and_local_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docs = [f"PREFIXDOC_{i:04d}_" + ("gamma " * 10) for i in range(12)]
+    pq_file = tmp_path / "data" / "p0.parquet"
+    _write_multi_rg_parquet(pq_file, docs, rows_per_rg=6)
+
+    def fake_worker_init(*args):
+        sp._WORKER_TOKENIZER = DummyFastTokenizer()
+        sp._WORKER_EOS_ID = 0
+        sp._WORKER_VOCAB_SIZE = 49152
+        sp._WORKER_MAX_DOC_TOKENS = 8192
+        sp._WORKER_HARD_DOC_LIMIT = 65536
+
+    monkeypatch.setattr(sp, "_worker_init", fake_worker_init)
+
+    cfg = {
+        "stage": "stream_stage1",
+        "seed": 42,
+        "tokenizer": {"id": "dummy", "vocab_size": 49152},
+        "output": {
+            "repo_id": "Dhiraj309/laughlm-135m-shards-v2",
+            "path_prefix": "stage1",
+            "shard_size_tokens": 100,
+        },
+        "sources": [
+            {
+                "name": "pq_src",
+                "local_files": [str(pq_file)],
+                "weight": 1.0,
+                "columns": {"text": "text", "id": "id"},
+                "required_columns": ["text"],
+                "filters": {"min_words": 3},
+            }
+        ],
+    }
+    cfg_path = tmp_path / "prefix_cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    work_dir = tmp_path / "work"
+
+    sp.main([
+        "--config", str(cfg_path),
+        "--tmp-dir", str(work_dir),
+        "--workers", "1",
+        "--batch-size", "4",
+        "--max-shards", "1",
+        "--no-upload",
+    ])
+
+    shards_root = work_dir / "shards"
+    man_path = shards_root / "stage1" / "stream_stage1_w00_shard_00000.manifest.json"
+    bin_path = shards_root / "stage1" / "stream_stage1_w00_shard_00000.bin"
+    assert man_path.is_file()
+    assert bin_path.is_file()
+    manifest = json.loads(man_path.read_text(encoding="utf-8"))
+    # Repo-root-relative data_path works with both TrainLM HuggingFacePackedShardSource
+    # and PackedBinDataset.from_directory(shards_root, manifest_pattern="stage1/*.manifest.json").
+    assert manifest["data_path"] == "stage1/stream_stage1_w00_shard_00000.bin"
+    assert (shards_root / manifest["data_path"]).resolve() == bin_path.resolve()
+

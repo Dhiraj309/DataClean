@@ -110,6 +110,7 @@ def _worker_init(
     vocab_size: int,
     max_doc_tokens: int,
     hard_doc_limit: int,
+    expected_eos_id: int | None = None,
 ) -> None:
     global _WORKER_TOKENIZER, _WORKER_EOS_ID, _WORKER_VOCAB_SIZE
     global _WORKER_MAX_DOC_TOKENS, _WORKER_HARD_DOC_LIMIT
@@ -128,6 +129,10 @@ def _worker_init(
     eos_id = tokenizer.eos_token_id
     if eos_id is None:
         raise ValueError(f"Tokenizer {tokenizer_id!r} has no eos_token_id")
+    if expected_eos_id is not None and int(eos_id) != int(expected_eos_id):
+        raise ValueError(
+            f"Tokenizer {tokenizer_id!r} eos_token_id={eos_id} != expected {expected_eos_id}"
+        )
     if int(eos_id) >= int(vocab_size) or int(vocab_size) > 65536:
         raise ValueError(
             f"Tokenizer vocab_size={vocab_size}, eos_id={eos_id} incompatible with uint16"
@@ -893,6 +898,7 @@ class UploadJob:
     shard_id: str
     bin_path: Path
     manifest_path: Path
+    remote_manifest_path: str
     manifest_dict: dict[str, Any]
     state_path: Path
     remote_state_path: str
@@ -945,7 +951,7 @@ class AsyncShardUploader:
                 path_or_fileobj=str(job.bin_path),
             ),
             CommitOperationAdd(
-                path_in_repo=job.manifest_path.name,
+                path_in_repo=job.remote_manifest_path,
                 path_or_fileobj=str(job.manifest_path),
             ),
             CommitOperationAdd(
@@ -1121,6 +1127,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--shard-tokens", type=int, default=None)
+    parser.add_argument("--path-prefix", default=None)
     parser.add_argument("--target-tokens", type=int, default=None)
     parser.add_argument("--dry-run-tokens", type=int, default=None)
     parser.add_argument("--max-shards", type=int, default=None)
@@ -1158,11 +1165,23 @@ def main(argv: list[str] | None = None) -> None:
     vocab_size = int(tok_cfg.get("vocab_size", DEFAULT_VOCAB_SIZE))
     max_doc_tokens = int(tok_cfg.get("max_doc_tokens", DEFAULT_MAX_DOC_TOKENS))
     hard_doc_limit = int(tok_cfg.get("hard_doc_limit", DEFAULT_HARD_DOC_LIMIT))
+    expected_eos_id = (
+        int(tok_cfg["eos_token_id"])
+        if tok_cfg.get("eos_token_id") is not None
+        else None
+    )
 
     out_cfg = dict(cfg.get("output") or {})
     output_repo = str(out_cfg.get("repo_id", ""))
+    raw_prefix = (
+        args.path_prefix
+        if args.path_prefix is not None
+        else out_cfg.get("path_prefix", "")
+    )
+    path_prefix = str(raw_prefix or "").strip("/")
     shard_tokens = int(
         args.shard_tokens
+        or out_cfg.get("shard_size_tokens")
         or out_cfg.get("shard_tokens", DEFAULT_SHARD_TOKENS)
     )
     if shard_tokens <= 0:
@@ -1196,7 +1215,8 @@ def main(argv: list[str] | None = None) -> None:
 
     state_rel_path = f"_state/{stage}_w{args.worker_id:02d}.json"
     local_state_path = tmp_dir / "state" / f"{stage}_w{args.worker_id:02d}.json"
-    shards_dir = tmp_dir / "shards"
+    shards_root = tmp_dir / "shards"
+    shards_dir = shards_root / path_prefix if path_prefix else shards_root
     shards_dir.mkdir(parents=True, exist_ok=True)
     prefetch_dir = tmp_dir / "prefetch"
 
@@ -1324,6 +1344,12 @@ def main(argv: list[str] | None = None) -> None:
         shard_id = f"{stage}_w{args.worker_id:02d}_shard_{shard_idx:05d}"
         bin_path = shards_dir / f"{shard_id}.bin"
         manifest_path = shards_dir / f"{shard_id}.manifest.json"
+        remote_data_path = f"{path_prefix}/{shard_id}.bin" if path_prefix else f"{shard_id}.bin"
+        remote_manifest_path = (
+            f"{path_prefix}/{shard_id}.manifest.json"
+            if path_prefix
+            else f"{shard_id}.manifest.json"
+        )
         t_cnt, t_min, t_max, f_size, sha = write_shuffled_shard(
             chunks=shard_chunks,
             doc_lengths=shard_doc_lengths,
@@ -1333,7 +1359,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         manifest = build_explicit_v1_manifest(
             shard_id=shard_id,
-            data_path=bin_path.name,
+            data_path=remote_data_path,
             token_count=t_cnt,
             token_id_min=t_min,
             token_id_max=t_max,
@@ -1368,6 +1394,7 @@ def main(argv: list[str] | None = None) -> None:
                 shard_id=shard_id,
                 bin_path=bin_path,
                 manifest_path=manifest_path,
+                remote_manifest_path=remote_manifest_path,
                 manifest_dict=manifest,
                 state_path=local_state_path,
                 remote_state_path=state_rel_path,
@@ -1384,7 +1411,13 @@ def main(argv: list[str] | None = None) -> None:
     with ProcessPoolExecutor(
         max_workers=args.workers,
         initializer=_worker_init,
-        initargs=(tokenizer_id, vocab_size, max_doc_tokens, hard_doc_limit),
+        initargs=(
+            tokenizer_id,
+            vocab_size,
+            max_doc_tokens,
+            hard_doc_limit,
+            expected_eos_id,
+        ),
     ) as executor:
         # Warm up workers before starting background uploader thread to avoid multi-threaded fork warnings.
         executor.submit(int, 0).result()
