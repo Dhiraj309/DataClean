@@ -1,0 +1,112 @@
+stage: stream_stage2
+name: stream_stage2_anneal_5b
+seed: 142
+target_tokens: 5000000000
+reverse_files: true
+
+tokenizer:
+  id: "HuggingFaceTB/SmolLM2-135M"
+  vocab_size: 49152
+  max_doc_tokens: 8192
+  hard_doc_limit: 65536
+
+output:
+  repo_id: "${HF_USER}/laughlm-smol-5b-stage2-anneal"
+  private: true
+  shard_tokens: 500000000
+
+sources:
+  - name: finemath
+    repo_id: "HuggingFaceTB/finemath"
+    revision: "main"
+    path_prefix: "finemath-4plus"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.30
+    columns:
+      text: text
+      url: url
+      language: language
+      language_score: language_score
+      token_count: token_count
+      score: score
+      int_score: int_score
+    required_columns:
+      - text
+      - language
+      - token_count
+      - int_score
+    filters:
+      languages: [en]
+      min_int_score: 4
+      min_token_count: 1024
+      max_words: 50000
+      max_chars: 250000
+      missing_policy: reject
+
+  - name: starcoderdata
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefixes:
+      - "python"
+      - "javascript"
+      - "cpp"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.25
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_estimated_tokens: 1024
+      max_words: 100000
+      max_chars: 500000
+
+  - name: cosmopedia_v2
+    repo_id: "HuggingFaceTB/smollm-corpus"
+    revision: "main"
+    path_prefix: "cosmopedia-v2"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.25
+    columns:
+      text: text
+      token_count: token_length
+      dataset: seed_data
+    required_columns:
+      - text
+      - token_length
+    filters:
+      min_token_count: 1024
+      max_words: 50000
+      max_chars: 250000
+      missing_policy: reject
+
+  - name: finepdfs_edu
+    repo_id: "HuggingFaceFW/finepdfs_edu_100BT-shuffled"
+    revision: "main"
+    path_prefix: "data"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.20
+    columns:
+      text: text
+      id: id
+      url: url
+      language: language
+      token_count: token_count
+      dataset: dataset
+    required_columns:
+      - text
+      - id
+      - language
+      - token_count
+    filters:
+      languages: [eng_Latn]
+      min_token_count: 1024
+      max_words: 100000
+      max_chars: 500000
+      missing_policy: reject
