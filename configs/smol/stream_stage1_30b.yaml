@@ -1,0 +1,181 @@
+stage: stream_stage1
+name: stream_stage1_30b
+seed: 42
+target_tokens: 30000000000
+reverse_files: false
+
+tokenizer:
+  id: "HuggingFaceTB/SmolLM2-135M"
+  vocab_size: 49152
+  eos_token_id: 0
+  max_doc_tokens: 8192
+  hard_doc_limit: 65536
+
+output:
+  repo_id: "Dhiraj309/laughlm-135m-shards-v2"
+  path_prefix: "stage1"
+  private: false
+  shard_size_tokens: 500000000
+
+sources:
+  - name: dclm
+    repo_id: "HuggingFaceFW/dclm_100BT-shuffled"
+    revision: "main"
+    path_prefix: "data"
+    file_pattern: "*.parquet"
+    weight: 0.40
+    columns:
+      text: text
+      id: id
+      url: url
+      language: language
+      language_score: language_score
+      fasttext_score: fasttext_score
+      dataset: dataset
+    required_columns:
+      - text
+      - id
+      - language
+      - language_score
+      - fasttext_score
+    filters:
+      languages: [en]
+      min_language_score: 0.95
+      min_fasttext_score: 0.018112
+      min_words: 100
+      min_chars: 400
+      max_words: 50000
+      max_chars: 250000
+      missing_policy: reject
+
+  - name: fineweb_edu
+    repo_id: "HuggingFaceFW/fineweb_edu_100BT-shuffled"
+    revision: "main"
+    path_prefix: "data"
+    file_pattern: "*.parquet"
+    weight: 0.35
+    columns:
+      text: text
+      id: id
+      url: url
+      language: language
+      language_score: language_score
+      token_count: token_count
+      score: score
+      int_score: int_score
+      dataset: dataset
+    required_columns:
+      - text
+      - id
+      - language
+      - language_score
+      - token_count
+      - int_score
+    filters:
+      languages: [en]
+      min_language_score: 0.93
+      min_int_score: 3
+      min_token_count: 512
+      max_words: 50000
+      max_chars: 250000
+      missing_policy: reject
+
+  - name: cosmopedia_v2
+    repo_id: "HuggingFaceTB/smollm-corpus"
+    revision: "main"
+    path_prefix: "cosmopedia-v2"
+    file_pattern: "*.parquet"
+    weight: 0.10
+    columns:
+      text: text
+      token_count: token_length
+      dataset: seed_data
+    required_columns:
+      - text
+      - token_length
+    filters:
+      min_token_count: 512
+      max_words: 25000
+      max_chars: 150000
+      missing_policy: reject
+
+  - name: starcoder_python
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "python"
+    file_pattern: "*.parquet"
+    weight: 0.04
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_words: 30
+      min_chars: 100
+      max_words: 50000
+      max_chars: 250000
+
+  - name: starcoder_javascript
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "javascript"
+    file_pattern: "*.parquet"
+    weight: 0.02
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_words: 30
+      min_chars: 100
+      max_words: 50000
+      max_chars: 250000
+
+  - name: starcoder_cpp
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "cpp"
+    file_pattern: "*.parquet"
+    weight: 0.02
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_words: 30
+      min_chars: 100
+      max_words: 50000
+      max_chars: 250000
+
+  - name: finemath
+    repo_id: "HuggingFaceTB/finemath"
+    revision: "main"
+    path_prefix: "finemath-4plus"
+    file_pattern: "*.parquet"
+    weight: 0.07
+    columns:
+      text: text
+      url: url
+      language: language
+      language_score: language_score
+      token_count: token_count
+      score: score
+      int_score: int_score
+    required_columns:
+      - text
+      - language
+      - token_count
+      - int_score
+    filters:
+      languages: [en]
+      min_int_score: 4
+      min_token_count: 256
+      max_words: 25000
+      max_chars: 150000
+      missing_policy: reject
