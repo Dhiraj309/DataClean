@@ -18,121 +18,66 @@ output:
   shard_size_tokens: 500000000
 
 sources:
-  - name: finemath
-    repo_id: "HuggingFaceTB/finemath"
+  - name: fineweb_edu
+    repo_id: "HuggingFaceFW/fineweb_edu_100BT-shuffled"
     revision: "main"
-    path_prefix: "finemath-4plus"
+    path_prefix: "data"
     file_pattern: "*.parquet"
     reverse_files: true
-    weight: 0.15
+    weight: 0.20
     columns:
       text: text
+      id: id
       url: url
       language: language
       language_score: language_score
       token_count: token_count
       score: score
       int_score: int_score
+      dataset: dataset
     required_columns:
       - text
+      - id
       - language
+      - language_score
       - token_count
       - int_score
     filters:
       languages: [en]
-      min_int_score: 4
+      min_language_score: 0.93
+      min_int_score: 3
       min_token_count: 1024
       max_words: 50000
       max_chars: 250000
       missing_policy: reject
 
-  - name: megamath_web_pro
-    repo_id: "IFM/MegaMath"
+  - name: dclm
+    repo_id: "HuggingFaceFW/dclm_100BT-shuffled"
     revision: "main"
-    path_prefix: "megamath-web-pro"
+    path_prefix: "data"
     file_pattern: "*.parquet"
     reverse_files: true
     weight: 0.15
     columns:
       text: text
+      id: id
+      url: url
+      language: language
+      language_score: language_score
+      fasttext_score: fasttext_score
+      dataset: dataset
     required_columns:
       - text
+      - id
+      - language
+      - language_score
+      - fasttext_score
     filters:
+      languages: [en]
+      min_language_score: 0.95
+      min_fasttext_score: 0.018112
+      min_words: 750
       min_chars: 4000
-      max_words: 50000
-      max_chars: 250000
-      missing_policy: reject
-
-  - name: starcoder_python
-    repo_id: "bigcode/starcoderdata"
-    revision: "main"
-    path_prefix: "python"
-    file_pattern: "*.parquet"
-    reverse_files: true
-    weight: 0.13
-    columns:
-      text: content
-      id: id
-      dataset: max_stars_repo_name
-    required_columns:
-      - content
-    filters:
-      min_chars: 4000
-      max_words: 100000
-      max_chars: 500000
-
-  - name: starcoder_javascript
-    repo_id: "bigcode/starcoderdata"
-    revision: "main"
-    path_prefix: "javascript"
-    file_pattern: "*.parquet"
-    reverse_files: true
-    weight: 0.06
-    columns:
-      text: content
-      id: id
-      dataset: max_stars_repo_name
-    required_columns:
-      - content
-    filters:
-      min_chars: 4000
-      max_words: 100000
-      max_chars: 500000
-
-  - name: starcoder_cpp
-    repo_id: "bigcode/starcoderdata"
-    revision: "main"
-    path_prefix: "cpp"
-    file_pattern: "*.parquet"
-    reverse_files: true
-    weight: 0.06
-    columns:
-      text: content
-      id: id
-      dataset: max_stars_repo_name
-    required_columns:
-      - content
-    filters:
-      min_chars: 4000
-      max_words: 100000
-      max_chars: 500000
-
-  - name: cosmopedia_v2
-    repo_id: "HuggingFaceTB/smollm-corpus"
-    revision: "main"
-    path_prefix: "cosmopedia-v2"
-    file_pattern: "*.parquet"
-    reverse_files: true
-    weight: 0.25
-    columns:
-      text: text
-      token_count: token_length
-      dataset: seed_data
-    required_columns:
-      - text
-      - token_length
-    filters:
-      min_token_count: 1024
       max_words: 50000
       max_chars: 250000
       missing_policy: reject
@@ -161,4 +106,123 @@ sources:
       min_token_count: 1024
       max_words: 100000
       max_chars: 500000
+      missing_policy: reject
+
+  - name: cosmopedia_v2
+    repo_id: "HuggingFaceTB/smollm-corpus"
+    revision: "main"
+    path_prefix: "cosmopedia-v2"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.20
+    columns:
+      text: text
+      token_count: token_length
+      dataset: seed_data
+    required_columns:
+      - text
+      - token_length
+    filters:
+      min_token_count: 1024
+      max_words: 50000
+      max_chars: 250000
+      missing_policy: reject
+
+  - name: starcoder_python
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "python"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.07
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_chars: 4000
+      max_words: 100000
+      max_chars: 500000
+
+  - name: starcoder_javascript
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "javascript"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.04
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_chars: 4000
+      max_words: 100000
+      max_chars: 500000
+
+  - name: starcoder_cpp
+    repo_id: "bigcode/starcoderdata"
+    revision: "main"
+    path_prefix: "cpp"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.04
+    columns:
+      text: content
+      id: id
+      dataset: max_stars_repo_name
+    required_columns:
+      - content
+    filters:
+      min_chars: 4000
+      max_words: 100000
+      max_chars: 500000
+
+  - name: finemath
+    repo_id: "HuggingFaceTB/finemath"
+    revision: "main"
+    path_prefix: "finemath-4plus"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.05
+    columns:
+      text: text
+      url: url
+      language: language
+      language_score: language_score
+      token_count: token_count
+      score: score
+      int_score: int_score
+    required_columns:
+      - text
+      - language
+      - token_count
+      - int_score
+    filters:
+      languages: [en]
+      min_int_score: 4
+      min_token_count: 1024
+      max_words: 50000
+      max_chars: 250000
+      missing_policy: reject
+
+  - name: megamath
+    repo_id: "IFM/MegaMath"
+    revision: "main"
+    path_prefix: "megamath-web-pro"
+    file_pattern: "*.parquet"
+    reverse_files: true
+    weight: 0.05
+    columns:
+      text: text
+    required_columns:
+      - text
+    filters:
+      min_chars: 4000
+      max_words: 50000
+      max_chars: 250000
       missing_policy: reject

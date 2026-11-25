@@ -337,7 +337,7 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
     }
     sample_by_source = {
         "dclm": {
-            "text": ("High quality curated web article explaining numerical algorithms. " * 25),
+            "text": ("High quality curated web article explaining numerical algorithms. " * 100),
             "id": "dclm-1",
             "url": "https://example.com/a",
             "language": "en",
@@ -373,7 +373,7 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
             "score": 4.5,
             "int_score": 4,
         },
-        "megamath_web_pro": {
+        "megamath": {
             "text": ("Proof of Cauchy-Schwarz inequality in inner product spaces. " * 95),
         },
         "finepdfs_edu": {
@@ -387,14 +387,32 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
     }
 
     tok = DummyFastTokenizer()
-    for yaml_path, expected_starcoder in (
+    for yaml_path, expected_weights in (
         (
             "configs/smol/stream_stage1_30b.yaml",
-            {"starcoder_python": 0.04, "starcoder_javascript": 0.02, "starcoder_cpp": 0.02},
+            {
+                "dclm": 0.40,
+                "fineweb_edu": 0.35,
+                "cosmopedia_v2": 0.10,
+                "starcoder_python": 0.04,
+                "starcoder_javascript": 0.02,
+                "starcoder_cpp": 0.02,
+                "finemath": 0.07,
+            },
         ),
         (
             "configs/smol/stream_stage2_anneal_5b.yaml",
-            {"starcoder_python": 0.13, "starcoder_javascript": 0.06, "starcoder_cpp": 0.06},
+            {
+                "fineweb_edu": 0.20,
+                "dclm": 0.15,
+                "finepdfs_edu": 0.20,
+                "cosmopedia_v2": 0.20,
+                "starcoder_python": 0.07,
+                "starcoder_javascript": 0.04,
+                "starcoder_cpp": 0.04,
+                "finemath": 0.05,
+                "megamath": 0.05,
+            },
         ),
     ):
         cfg = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
@@ -405,8 +423,10 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
         assert cfg["tokenizer"]["eos_token_id"] == 0
         weights = {s["name"]: s["weight"] for s in cfg["sources"]}
         assert abs(sum(weights.values()) - 1.0) < 1e-9
-        for sc_name, sc_weight in expected_starcoder.items():
-            assert weights[sc_name] == sc_weight
+        assert weights == expected_weights
+        if yaml_path.endswith("stream_stage2_anneal_5b.yaml"):
+            assert len(cfg["sources"]) == 9
+            assert all(s.get("reverse_files") is True for s in cfg["sources"])
         for src in cfg["sources"]:
             name = src["name"]
             assert name in sample_by_source, f"Missing test fixture for {name}"
