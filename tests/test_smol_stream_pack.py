@@ -416,7 +416,7 @@ def test_all_configured_sources_pass_accepts_and_tokenize() -> None:
         ),
     ):
         cfg = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
-        assert cfg["output"]["repo_id"] == "Dhiraj309/laughlm-135m-shards-v2"
+        assert cfg["output"]["repo_id"] == "Dhiraj45/laughlm-135m-shards-v2"
         assert cfg["output"]["private"] is False
         assert cfg["tokenizer"]["id"] == "HuggingFaceTB/SmolLM2-135M"
         assert cfg["tokenizer"]["vocab_size"] == 49152
